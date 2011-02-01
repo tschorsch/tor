@@ -2242,10 +2242,11 @@ connection_consider_empty_write_buckets(connection_t *conn)
 {
   const char *reason;
 
-  if (global_write_bucket <= 0) {
+  if (global_write_bucket <= 0 && !(get_options()->UseTokenBucketPatch)) {
     reason = "global write bucket exhausted. Pausing.";
   } else if (connection_counts_as_relayed_traffic(conn, approx_time()) &&
-             global_relayed_write_bucket <= 0) {
+             !(get_options()->UseTokenBucketPatch) &&
+!              (global_relayed_write_bucket <= 0)) {
     reason = "global relayed write bucket exhausted. Pausing.";
   } else if (connection_speaks_cells(conn) &&
              conn->state == OR_CONN_STATE_OPEN &&
@@ -2282,31 +2283,26 @@ connection_bucket_init(void)
  **/
 static void
 connection_bucket_refill_helper(int *bucket, int rate, int burst,
-                                int seconds_elapsed, const char *name)
+                                int milliseconds_elapsed, const char *name)
 {
   int starting_bucket = *bucket;
-  if (starting_bucket < burst && seconds_elapsed) {
-    if (((burst - starting_bucket)/seconds_elapsed) < rate) {
-      *bucket = burst;  /* We would overflow the bucket; just set it to
-                         * the maximum. */
-    } else {
-      int incr = rate*seconds_elapsed;
-      *bucket += incr;
-      if (*bucket > burst || *bucket < starting_bucket) {
-        /* If we overflow the burst, or underflow our starting bucket,
-         * cap the bucket value to burst. */
-        /* XXXX this might be redundant now, but it doesn't show up
-         * in profiles.  Remove it after analysis. */
-        *bucket = burst;
-      }
+  if (starting_bucket < burst && milliseconds_elapsed) {
+    int incr = rate*milliseconds_elapsed/1000;
+    *bucket += incr;
+    if (*bucket > burst || *bucket < starting_bucket) {
+      /* If we overflow the burst, or underflow our starting bucket,
+       * cap the bucket value to burst. */
+      /* XXXX this might be redundant now, but it doesn't show up
+       * in profiles.  Remove it after analysis. */
+      *bucket = burst;
     }
-    log(LOG_DEBUG, LD_NET,"%s now %d.", name, *bucket);
   }
+  log(LOG_DEBUG, LD_NET,"%s now %d.", name, *bucket);
 }
 
 /** A second has rolled over; increment buckets appropriately. */
 void
-connection_bucket_refill(int seconds_elapsed, time_t now)
+connection_bucket_refill(int milliseconds_elapsed, time_t now)
 {
   or_options_t *options = get_options();
   smartlist_t *conns = get_connection_array();
@@ -2320,25 +2316,26 @@ connection_bucket_refill(int seconds_elapsed, time_t now)
     relayburst = (int)options->BandwidthBurst;
   }
 
-  tor_assert(seconds_elapsed >= 0);
+  tor_assert(milliseconds_elapsed >= 0);
 
   write_buckets_empty_last_second =
-    global_relayed_write_bucket <= 0 || global_write_bucket <= 0;
+    (global_relayed_write_bucket <= 0 || global_write_bucket <= 0) &&
+          !options->UseTokenBucketPatch;
 
   /* refill the global buckets */
   connection_bucket_refill_helper(&global_read_bucket,
                                   (int)options->BandwidthRate,
                                   (int)options->BandwidthBurst,
-                                  seconds_elapsed, "global_read_bucket");
+                                  milliseconds_elapsed, "global_read_bucket");
   connection_bucket_refill_helper(&global_write_bucket,
                                   (int)options->BandwidthRate,
                                   (int)options->BandwidthBurst,
-                                  seconds_elapsed, "global_write_bucket");
+                                  milliseconds_elapsed, "global_write_bucket");
   connection_bucket_refill_helper(&global_relayed_read_bucket,
-                                  relayrate, relayburst, seconds_elapsed,
+                                  relayrate, relayburst, milliseconds_elapsed,
                                   "global_relayed_read_bucket");
   connection_bucket_refill_helper(&global_relayed_write_bucket,
-                                  relayrate, relayburst, seconds_elapsed,
+                                  relayrate, relayburst, milliseconds_elapsed,
                                   "global_relayed_write_bucket");
 
   /* refill the per-connection buckets */
@@ -2350,14 +2347,14 @@ connection_bucket_refill(int seconds_elapsed, time_t now)
         connection_bucket_refill_helper(&or_conn->read_bucket,
                                         or_conn->bandwidthrate,
                                         or_conn->bandwidthburst,
-                                        seconds_elapsed,
+                                        milliseconds_elapsed,
                                         "or_conn->read_bucket");
       }
       if (connection_bucket_should_increase(or_conn->write_bucket, or_conn)) {
         connection_bucket_refill_helper(&or_conn->write_bucket,
                                         or_conn->bandwidthrate,
                                         or_conn->bandwidthburst,
-                                        seconds_elapsed,
+                                        milliseconds_elapsed,
                                         "or_conn->write_bucket");
       }
     }
@@ -3059,8 +3056,13 @@ connection_handle_write_impl(connection_t *conn, int force)
       return -1;
   }
 
-  max_to_write = force ? (ssize_t)conn->outbuf_flushlen
-    : connection_bucket_write_limit(conn, now);
+  if (get_options()->UseTokenBucketPatch)
+    /* In order to avoid the "doouble door effect", do not
+     * limit outgoing data. */
+    max_to_write = (ssize_t)conn->outbuf_flushlen;
+  else
+    max_to_write = force ? (ssize_t)conn->outbuf_flushlen
+      : connection_bucket_write_limit(conn, now);
 
   if (connection_speaks_cells(conn) &&
       conn->state > OR_CONN_STATE_PROXY_HANDSHAKING) {

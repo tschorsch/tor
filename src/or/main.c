@@ -1456,12 +1456,7 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
    * time against a bunch of timeouts every second. */
   static time_t current_second = 0;
   time_t now;
-  size_t bytes_written;
-  size_t bytes_read;
   int seconds_elapsed;
-#ifdef USE_BUFFEREVENTS
-  uint64_t cur_read,cur_written;
-#endif
   or_options_t *options = get_options();
   (void)timer;
   (void)arg;
@@ -1475,29 +1470,20 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
   /* the second has rolled over. check more stuff. */
   seconds_elapsed = current_second ? (int)(now - current_second) : 0;
 #ifdef USE_BUFFEREVENTS
-  connection_get_rate_limit_totals(&cur_read, &cur_written);
-  bytes_written = (size_t)(cur_written - stats_prev_n_written);
-  bytes_read = (size_t)(cur_read - stats_prev_n_read);
-#else
-  bytes_written = stats_prev_global_write_bucket - global_write_bucket;
-  bytes_read = stats_prev_global_read_bucket - global_read_bucket;
-#endif
-  stats_n_bytes_read += bytes_read;
-  stats_n_bytes_written += bytes_written;
-  if (accounting_is_enabled(options) && seconds_elapsed >= 0)
-    accounting_add_bytes(bytes_read, bytes_written, seconds_elapsed);
-  control_event_bandwidth_used((uint32_t)bytes_read,(uint32_t)bytes_written);
-  control_event_stream_bandwidth_used();
-
-  if (seconds_elapsed > 0)
-    connection_bucket_refill(seconds_elapsed, now);
-#ifdef USE_BUFFEREVENTS
-  stats_prev_n_written = cur_written;
-  stats_prev_n_read = cur_read;
-#else
-  stats_prev_global_read_bucket = global_read_bucket;
-  stats_prev_global_write_bucket = global_write_bucket;
-#endif
+    size_t bytes_written, bytes_read;
+    uint64_t cur_read,cur_written;
+    connection_get_rate_limit_totals(&cur_read, &cur_written);
+    bytes_written = (size_t)(cur_written - stats_prev_n_written);
+    bytes_read = (size_t)(cur_read - stats_prev_n_read);
+    stats_n_bytes_read += bytes_read;
+    stats_n_bytes_written += bytes_written;
+    if (accounting_is_enabled(options) && seconds_elapsed >= 0)
+      accounting_add_bytes(bytes_read, bytes_written, seconds_elapsed);
+    control_event_bandwidth_used((uint32_t)bytes_read,(uint32_t)bytes_written);
+    control_event_stream_bandwidth_used();
+    stats_prev_n_written = cur_written;
+    stats_prev_n_read = cur_read;
+  #endif
 
   if (server_mode(options) &&
       !we_are_hibernating() &&
@@ -1545,6 +1531,61 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
 
   current_second = now; /* remember which second it is, for next time */
 }
+
+#ifndef USE_BUFFEREVENTS
+/** Calculate difference between two timevals and return result as double in seconds. */
+double timevaldiff(struct timeval *starttime, struct timeval *finishtime)
+{
+  long msec;
+  msec=(finishtime->tv_sec-starttime->tv_sec)*1000;
+  msec+=(finishtime->tv_usec-starttime->tv_usec)/1000;
+  return (double) msec;
+}
+
+/** Timer: used to invoke refill_callback(). */
+static periodic_timer_t *refill_timer = NULL;
+
+/** Libevent callback: invoked periodically to refill token buckets
+ * and count r/w bytes. It is only used when bufferevents are disabled. */
+static void refill_callback(periodic_timer_t *timer, void *arg)
+{
+  static struct timeval current_millisecond;
+  struct timeval now;
+
+  size_t bytes_written;
+  size_t bytes_read;
+  int milliseconds_elapsed;
+
+  (void)timer;
+  (void)arg;
+
+  or_options_t *options = get_options();
+
+  /* log_notice(LD_GENERAL, "Tock."); */
+  gettimeofday(&now, 0);
+
+  milliseconds_elapsed = (current_millisecond.tv_sec || current_millisecond.tv_usec)
+          ? timevaldiff(&current_millisecond,&now) : 0;
+
+  bytes_written = stats_prev_global_write_bucket - global_write_bucket;
+  bytes_read = stats_prev_global_read_bucket - global_read_bucket;
+
+  stats_n_bytes_read += bytes_read;
+  stats_n_bytes_written += bytes_written;
+  if (accounting_is_enabled(options) && milliseconds_elapsed >= 0)
+    accounting_add_bytes(bytes_read, bytes_written, milliseconds_elapsed/1000.0);
+  control_event_bandwidth_used((uint32_t)bytes_read,(uint32_t)bytes_written);
+  control_event_stream_bandwidth_used();
+
+  if (milliseconds_elapsed > 0)
+    connection_bucket_refill(milliseconds_elapsed, time(NULL));
+
+  stats_prev_global_read_bucket = global_read_bucket;
+  stats_prev_global_write_bucket = global_write_bucket;
+
+  current_millisecond = now; /* remember which second it is, for next time */
+}
+#endif
 
 #ifndef MS_WINDOWS
 /** Called when a possibly ignorable libevent error occurs; ensures that we
@@ -1743,6 +1784,22 @@ do_main_loop(void)
                                       NULL);
     tor_assert(second_timer);
   }
+
+  #ifndef USE_BUFFEREVENTS
+  if (!refill_timer) {
+    struct timeval refill_interval;
+    int msecs = get_options()->TokenBucketRefillInterval;
+
+    refill_interval.tv_sec =  msecs/1000;
+    refill_interval.tv_usec = (msecs%1000)*1000;
+
+    refill_timer = periodic_timer_new(tor_libevent_get_base(),
+                                      &refill_interval,
+                                      refill_callback,
+                                      NULL);
+    tor_assert(refill_timer);
+  }
+  #endif
 
   for (;;) {
     if (nt_service_is_stopping())

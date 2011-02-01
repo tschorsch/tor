@@ -64,7 +64,7 @@ int retry_all_listeners(smartlist_t *replaced_conns,
 ssize_t connection_bucket_write_limit(connection_t *conn, time_t now);
 int global_write_bucket_low(connection_t *conn, size_t attempt, int priority);
 void connection_bucket_init(void);
-void connection_bucket_refill(int seconds_elapsed, time_t now);
+void connection_bucket_refill(int milliseconds_elapsed, time_t now);
 
 int connection_handle_read(connection_t *conn);
 
