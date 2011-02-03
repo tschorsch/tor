@@ -1533,15 +1533,6 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
 }
 
 #ifndef USE_BUFFEREVENTS
-/** Calculate difference between two timevals and return result as double in seconds. */
-double timevaldiff(struct timeval *starttime, struct timeval *finishtime)
-{
-  long msec;
-  msec=(finishtime->tv_sec-starttime->tv_sec)*1000;
-  msec+=(finishtime->tv_usec-starttime->tv_usec)/1000;
-  return (double) msec;
-}
-
 /** Timer: used to invoke refill_callback(). */
 static periodic_timer_t *refill_timer = NULL;
 
@@ -1556,16 +1547,16 @@ static void refill_callback(periodic_timer_t *timer, void *arg)
   size_t bytes_read;
   int milliseconds_elapsed;
 
+  or_options_t *options = get_options();
+
   (void)timer;
   (void)arg;
 
-  or_options_t *options = get_options();
-
-  /* log_notice(LD_GENERAL, "Tock."); */
   gettimeofday(&now, 0);
 
-  milliseconds_elapsed = (current_millisecond.tv_sec || current_millisecond.tv_usec)
-          ? timevaldiff(&current_millisecond,&now) : 0;
+  milliseconds_elapsed = (current_millisecond.tv_sec ||
+                         current_millisecond.tv_usec) ?
+                         tv_mdiff(&current_millisecond,&now) : 0;
 
   bytes_written = stats_prev_global_write_bucket - global_write_bucket;
   bytes_read = stats_prev_global_read_bucket - global_read_bucket;

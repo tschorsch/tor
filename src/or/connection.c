@@ -2242,11 +2242,12 @@ connection_consider_empty_write_buckets(connection_t *conn)
 {
   const char *reason;
 
-  if (global_write_bucket <= 0 && !(get_options()->UseTokenBucketPatch)) {
+  if (global_write_bucket <= 0 &&
+      !get_options()->DisableOutgoingTokenBucket) {
     reason = "global write bucket exhausted. Pausing.";
   } else if (connection_counts_as_relayed_traffic(conn, approx_time()) &&
-             !(get_options()->UseTokenBucketPatch) &&
-!              (global_relayed_write_bucket <= 0)) {
+             !get_options()->DisableOutgoingTokenBucket &&
+             global_relayed_write_bucket <= 0) {
     reason = "global relayed write bucket exhausted. Pausing.";
   } else if (connection_speaks_cells(conn) &&
              conn->state == OR_CONN_STATE_OPEN &&
@@ -2320,22 +2321,26 @@ connection_bucket_refill(int milliseconds_elapsed, time_t now)
 
   write_buckets_empty_last_second =
     (global_relayed_write_bucket <= 0 || global_write_bucket <= 0) &&
-          !options->UseTokenBucketPatch;
+          !options->DisableOutgoingTokenBucket;
 
   /* refill the global buckets */
   connection_bucket_refill_helper(&global_read_bucket,
                                   (int)options->BandwidthRate,
                                   (int)options->BandwidthBurst,
-                                  milliseconds_elapsed, "global_read_bucket");
+                                  milliseconds_elapsed,
+                                  "global_read_bucket");
   connection_bucket_refill_helper(&global_write_bucket,
                                   (int)options->BandwidthRate,
                                   (int)options->BandwidthBurst,
-                                  milliseconds_elapsed, "global_write_bucket");
+                                  milliseconds_elapsed,
+                                  "global_write_bucket");
   connection_bucket_refill_helper(&global_relayed_read_bucket,
-                                  relayrate, relayburst, milliseconds_elapsed,
+                                  relayrate, relayburst,
+                                  milliseconds_elapsed,
                                   "global_relayed_read_bucket");
   connection_bucket_refill_helper(&global_relayed_write_bucket,
-                                  relayrate, relayburst, milliseconds_elapsed,
+                                  relayrate, relayburst,
+                                  milliseconds_elapsed,
                                   "global_relayed_write_bucket");
 
   /* refill the per-connection buckets */
@@ -3056,9 +3061,9 @@ connection_handle_write_impl(connection_t *conn, int force)
       return -1;
   }
 
-  if (get_options()->UseTokenBucketPatch)
-    /* In order to avoid the "doouble door effect", do not
-     * limit outgoing data. */
+  if (get_options()->DisableOutgoingTokenBucket)
+    /* In order to avoid the "double door effect", do not limit outgoing
+     * data. */
     max_to_write = (ssize_t)conn->outbuf_flushlen;
   else
     max_to_write = force ? (ssize_t)conn->outbuf_flushlen
