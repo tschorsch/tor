@@ -2252,6 +2252,7 @@ connection_consider_empty_write_buckets(connection_t *conn)
   } else if (connection_speaks_cells(conn) &&
              conn->state == OR_CONN_STATE_OPEN &&
              TO_OR_CONN(conn)->write_bucket <= 0) {
+    /* Why don't we consider DisableOutgoingTokenBucket here? -KL */
     reason = "connection write bucket exhausted. Pausing.";
   } else
     return; /* all good, no need to stop it */
@@ -2279,59 +2280,68 @@ connection_bucket_init(void)
 }
 
 /** Refill a single <b>bucket</b> called <b>name</b> with bandwidth rate
- * <b>rate</b> and bandwidth burst <b>burst</b>, assuming that
- * <b>seconds_elapsed</b> seconds have passed since the last call.
- **/
+ * per millisecond <b>rate</b> and bandwidth burst per refill interval
+ * <b>burst</b>, assuming that <b>milliseconds_elapsed</b> milliseconds
+ * have passed since the last call. */
 static void
 connection_bucket_refill_helper(int *bucket, int rate, int burst,
-                                int milliseconds_elapsed, const char *name)
+                                int milliseconds_elapsed,
+                                const char *name)
 {
   int starting_bucket = *bucket;
   if (starting_bucket < burst && milliseconds_elapsed) {
-    int incr = rate*milliseconds_elapsed/1000;
-    *bucket += incr;
-    if (*bucket > burst || *bucket < starting_bucket) {
-      /* If we overflow the burst, or underflow our starting bucket,
-       * cap the bucket value to burst. */
-      /* XXXX this might be redundant now, but it doesn't show up
-       * in profiles.  Remove it after analysis. */
-      *bucket = burst;
+    if (((burst - starting_bucket)/milliseconds_elapsed) < rate) {
+      *bucket = burst;  /* We would overflow the bucket; just set it to
+                         * the maximum. */
+    } else {
+      int incr = rate*milliseconds_elapsed;
+      *bucket += incr;
+      if (*bucket > burst || *bucket < starting_bucket) {
+        /* If we overflow the burst, or underflow our starting bucket,
+         * cap the bucket value to burst. */
+        /* XXXX this might be redundant now, but it doesn't show up
+         * in profiles.  Remove it after analysis. */
+        *bucket = burst;
+      }
     }
+    log(LOG_DEBUG, LD_NET,"%s now %d.", name, *bucket);
   }
-  log(LOG_DEBUG, LD_NET,"%s now %d.", name, *bucket);
 }
 
-/** A second has rolled over; increment buckets appropriately. */
+/** Time has passed; increment buckets appropriately. */
 void
 connection_bucket_refill(int milliseconds_elapsed, time_t now)
 {
   or_options_t *options = get_options();
   smartlist_t *conns = get_connection_array();
-  int relayrate, relayburst;
+  int bandwidthrate, bandwidthburst, relayrate, relayburst;
+
+  bandwidthrate = (int)options->BandwidthRate / 1000;
+  bandwidthburst = (int)options->BandwidthBurst / 1000 *
+                   (int)options->TokenBucketRefillInterval;
 
   if (options->RelayBandwidthRate) {
-    relayrate = (int)options->RelayBandwidthRate;
-    relayburst = (int)options->RelayBandwidthBurst;
+    relayrate = (int)options->RelayBandwidthRate / 1000;
+    relayburst = (int)options->RelayBandwidthBurst / 1000 *
+                 (int)options->TokenBucketRefillInterval;
   } else {
-    relayrate = (int)options->BandwidthRate;
-    relayburst = (int)options->BandwidthBurst;
+    relayrate = (int)options->BandwidthRate / 1000;
+    relayburst = (int)options->BandwidthBurst / 1000 *
+                 (int)options->TokenBucketRefillInterval;
   }
 
   tor_assert(milliseconds_elapsed >= 0);
 
-  write_buckets_empty_last_second =
-    (global_relayed_write_bucket <= 0 || global_write_bucket <= 0) &&
-          !options->DisableOutgoingTokenBucket;
+  write_buckets_empty_last_second = !options->DisableOutgoingTokenBucket &&
+      (global_relayed_write_bucket <= 0 || global_write_bucket <= 0);
 
   /* refill the global buckets */
   connection_bucket_refill_helper(&global_read_bucket,
-                                  (int)options->BandwidthRate,
-                                  (int)options->BandwidthBurst,
+                                  bandwidthrate, bandwidthburst,
                                   milliseconds_elapsed,
                                   "global_read_bucket");
   connection_bucket_refill_helper(&global_write_bucket,
-                                  (int)options->BandwidthRate,
-                                  (int)options->BandwidthBurst,
+                                  bandwidthrate, bandwidthburst,
                                   milliseconds_elapsed,
                                   "global_write_bucket");
   connection_bucket_refill_helper(&global_relayed_read_bucket,
@@ -2348,17 +2358,20 @@ connection_bucket_refill(int milliseconds_elapsed, time_t now)
   {
     if (connection_speaks_cells(conn)) {
       or_connection_t *or_conn = TO_OR_CONN(conn);
+      int orbandwidthrate = or_conn->bandwidthrate / 1000;
+      int orbandwidthburst = or_conn->bandwidthburst / 1000 *
+                             (int)options->TokenBucketRefillInterval;
       if (connection_bucket_should_increase(or_conn->read_bucket, or_conn)) {
         connection_bucket_refill_helper(&or_conn->read_bucket,
-                                        or_conn->bandwidthrate,
-                                        or_conn->bandwidthburst,
+                                        orbandwidthrate,
+                                        orbandwidthburst,
                                         milliseconds_elapsed,
                                         "or_conn->read_bucket");
       }
       if (connection_bucket_should_increase(or_conn->write_bucket, or_conn)) {
         connection_bucket_refill_helper(&or_conn->write_bucket,
-                                        or_conn->bandwidthrate,
-                                        or_conn->bandwidthburst,
+                                        orbandwidthrate,
+                                        orbandwidthburst,
                                         milliseconds_elapsed,
                                         "or_conn->write_bucket");
       }
@@ -2380,6 +2393,7 @@ connection_bucket_refill(int milliseconds_elapsed, time_t now)
 
     if (conn->write_blocked_on_bw == 1
         && global_write_bucket > 0 /* and we're allowed to write */
+        /* Should we consider DisableOutgoingTokenBucket here, too? -KLSH */
         && (!connection_counts_as_relayed_traffic(conn, now) ||
             global_relayed_write_bucket > 0) /* even if it's relayed traffic */
         && (!connection_speaks_cells(conn) ||
@@ -3061,13 +3075,9 @@ connection_handle_write_impl(connection_t *conn, int force)
       return -1;
   }
 
-  if (get_options()->DisableOutgoingTokenBucket)
-    /* In order to avoid the "double door effect", do not limit outgoing
-     * data. */
-    max_to_write = (ssize_t)conn->outbuf_flushlen;
-  else
-    max_to_write = force ? (ssize_t)conn->outbuf_flushlen
-      : connection_bucket_write_limit(conn, now);
+  max_to_write = force || get_options()->DisableOutgoingTokenBucket ?
+                 (ssize_t)conn->outbuf_flushlen :
+                 connection_bucket_write_limit(conn, now);
 
   if (connection_speaks_cells(conn) &&
       conn->state > OR_CONN_STATE_PROXY_HANDSHAKING) {

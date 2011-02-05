@@ -94,7 +94,7 @@ static uint64_t n_bytes_read_in_interval = 0;
 /** How many bytes have we written in this accounting interval? */
 static uint64_t n_bytes_written_in_interval = 0;
 /** How many seconds have we been running this interval? */
-static double n_seconds_active_in_interval = 0;
+static uint32_t n_seconds_active_in_interval = 0;
 /** How many seconds were we active in this interval before we hit our soft
  * limit? */
 static int n_seconds_to_hit_soft_limit = 0;
@@ -260,7 +260,7 @@ accounting_is_enabled(or_options_t *options)
  * passed, <b>n_read</b> bytes have been read, and <b>n_written</b>
  * bytes have been written. */
 void
-accounting_add_bytes(size_t n_read, size_t n_written, double seconds)
+accounting_add_bytes(size_t n_read, size_t n_written, int seconds)
 {
   n_bytes_read_in_interval += n_read;
   n_bytes_written_in_interval += n_written;
@@ -624,7 +624,7 @@ accounting_record_bandwidth_usage(time_t now, or_state_t *state)
   state->AccountingBytesReadInInterval = ROUND_UP(n_bytes_read_in_interval);
   state->AccountingBytesWrittenInInterval =
     ROUND_UP(n_bytes_written_in_interval);
-  state->AccountingSecondsActive = n_seconds_active_in_interval;
+  state->AccountingSecondsActive = (int) n_seconds_active_in_interval;
   state->AccountingExpectedUsage = expected_bandwidth_usage;
 
   state->AccountingSecondsToReachSoftLimit = n_seconds_to_hit_soft_limit;
@@ -763,7 +763,7 @@ hibernate_begin(hibernate_state_t new_state, time_t now)
   if (new_state == HIBERNATE_STATE_LOWBANDWIDTH &&
       hibernate_state == HIBERNATE_STATE_LIVE) {
     soft_limit_hit_at = now;
-    n_seconds_to_hit_soft_limit = n_seconds_active_in_interval;
+    n_seconds_to_hit_soft_limit = (int) n_seconds_active_in_interval;
     n_bytes_at_soft_limit = MAX(n_bytes_read_in_interval,
                                 n_bytes_written_in_interval);
   }

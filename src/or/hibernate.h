@@ -16,7 +16,7 @@ int accounting_parse_options(or_options_t *options, int validate_only);
 int accounting_is_enabled(or_options_t *options);
 void configure_accounting(time_t now);
 void accounting_run_housekeeping(time_t now);
-void accounting_add_bytes(size_t n_read, size_t n_written, double seconds);
+void accounting_add_bytes(size_t n_read, size_t n_written, int seconds);
 int accounting_record_bandwidth_usage(time_t now, or_state_t *state);
 void hibernate_begin_shutdown(void);
 int we_are_hibernating(void);

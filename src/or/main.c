@@ -1470,6 +1470,7 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
   /* the second has rolled over. check more stuff. */
   seconds_elapsed = current_second ? (int)(now - current_second) : 0;
 #ifdef USE_BUFFEREVENTS
+  {
     size_t bytes_written, bytes_read;
     uint64_t cur_read,cur_written;
     connection_get_rate_limit_totals(&cur_read, &cur_written);
@@ -1483,6 +1484,7 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
     control_event_stream_bandwidth_used();
     stats_prev_n_written = cur_written;
     stats_prev_n_read = cur_read;
+  }
   #endif
 
   if (server_mode(options) &&
@@ -1538,25 +1540,37 @@ static periodic_timer_t *refill_timer = NULL;
 
 /** Libevent callback: invoked periodically to refill token buckets
  * and count r/w bytes. It is only used when bufferevents are disabled. */
-static void refill_callback(periodic_timer_t *timer, void *arg)
+/* Libevent question: Can refill_callback() run in parallel to
+ * second_elapsed_callback()? What if second_elapsed_callback() takes
+ * longer than one token bucket refill interval? What happens to the
+ * tokens for that interval? -SH */
+static void
+refill_callback(periodic_timer_t *timer, void *arg)
 {
   static struct timeval current_millisecond;
   struct timeval now;
 
   size_t bytes_written;
   size_t bytes_read;
-  int milliseconds_elapsed;
+  int milliseconds_elapsed = 0;
+  int seconds_rolled_over = 0;
 
   or_options_t *options = get_options();
 
   (void)timer;
   (void)arg;
 
+  /* Libevent question: Can we use timer.tv for now? -KLSH */
   gettimeofday(&now, 0);
 
-  milliseconds_elapsed = (current_millisecond.tv_sec ||
-                         current_millisecond.tv_usec) ?
-                         tv_mdiff(&current_millisecond,&now) : 0;
+  /* If this is our first time, no time has passed. */
+  if (current_millisecond.tv_sec) {
+    long mdiff = tv_mdiff(&current_millisecond, &now);
+    if (mdiff > INT_MAX)
+      mdiff = INT_MAX;
+    milliseconds_elapsed = (int)mdiff;
+    seconds_rolled_over = (int)(now.tv_sec - current_millisecond.tv_sec);
+  }
 
   bytes_written = stats_prev_global_write_bucket - global_write_bucket;
   bytes_read = stats_prev_global_read_bucket - global_read_bucket;
@@ -1564,17 +1578,17 @@ static void refill_callback(periodic_timer_t *timer, void *arg)
   stats_n_bytes_read += bytes_read;
   stats_n_bytes_written += bytes_written;
   if (accounting_is_enabled(options) && milliseconds_elapsed >= 0)
-    accounting_add_bytes(bytes_read, bytes_written, milliseconds_elapsed/1000.0);
+    accounting_add_bytes(bytes_read, bytes_written, seconds_rolled_over);
   control_event_bandwidth_used((uint32_t)bytes_read,(uint32_t)bytes_written);
   control_event_stream_bandwidth_used();
 
   if (milliseconds_elapsed > 0)
-    connection_bucket_refill(milliseconds_elapsed, time(NULL));
+    connection_bucket_refill(milliseconds_elapsed, now.tv_sec);
 
   stats_prev_global_read_bucket = global_read_bucket;
   stats_prev_global_write_bucket = global_write_bucket;
 
-  current_millisecond = now; /* remember which second it is, for next time */
+  current_millisecond = now; /* remember what time it is, for next time */
 }
 #endif
 

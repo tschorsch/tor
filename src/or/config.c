@@ -1249,6 +1249,11 @@ options_act(or_options_t *old_options)
   if (accounting_is_enabled(options))
     configure_accounting(time(NULL));
 
+  if (options->TokenBucketRefillInterval == 0) {
+    log_warn(LD_CONFIG, "Token bucket refill interval must be positive.");
+    return -1;
+  }
+
 #ifdef USE_BUFFEREVENTS
   /* If we're using the bufferevents implementation and our rate limits
    * changed, we need to tell the rate-limiting system about it. */
