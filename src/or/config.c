@@ -4379,30 +4379,9 @@ options_init_logs(or_options_t *options, int validate_only)
     log_warn(LD_CONFIG, "Log time granularity '%d' has to be positive.",
              options->LogTimeGranularity);
     return -1;
-  } else if (1000 % options->LogTimeGranularity != 0 &&
-             options->LogTimeGranularity % 1000 != 0) {
-    int granularity = options->LogTimeGranularity;
-    if (granularity < 40) {
-      do granularity++;
-      while (1000 % granularity != 0);
-    } else if (granularity < 1000) {
-      granularity = 1000 / granularity;
-      while (1000 % granularity != 0)
-        granularity--;
-      granularity = 1000 / granularity;
-    } else {
-      granularity = 1000 * ((granularity / 1000) + 1);
-    }
-    log_warn(LD_CONFIG, "Log time granularity '%d' has to be either a "
-                        "divisor or a multiple of 1 second. Changing to "
-                        "'%d'.",
-             options->LogTimeGranularity, granularity);
-    if (!validate_only)
-      set_log_time_granularity(granularity);
-  } else {
-    if (!validate_only)
-      set_log_time_granularity(options->LogTimeGranularity);
   }
+  if (!validate_only)
+    set_log_time_granularity(options->LogTimeGranularity);
 
   ok = 1;
   elts = smartlist_create();
@@ -4990,6 +4969,24 @@ config_parse_msec_interval(const char *s, int *ok)
     log_warn(LD_CONFIG, "Msec interval '%s' is too long", s);
     *ok = 0;
     return -1;
+  }
+  if (1000 % r != 0 && r % 1000 != 0) {
+    if (r < 40) {
+      do r++;
+      while (1000 % r != 0);
+    } else if (r < 1000) {
+      r = 1000 / r;
+      while (1000 % r!= 0)
+        r--;
+      r = 1000 / r;
+    } else {
+      r = 1000 * ((r / 1000) + 1);
+      if (r > INT_MAX)
+        r = (INT_MAX / 1000) * 1000;
+    }
+    log_warn(LD_CONFIG, "Msec interval '%s' has to be either a divisor "
+                        "or a multiple of 1 second. Changing to '%d'.",
+                        s, (int)r);
   }
   return (int)r;
 }
