@@ -609,6 +609,13 @@ The following options are useful only for clients (that is, if
     unattached waiting for an appropriate circuit, before we fail it. (Default:
     2 minutes.)
 
+**TokenBucketRefillInterval** __NUM__::
+    Set the refill interval of Tor's token bucket to NUM milliseconds. 
+    NUM must be positive and either a divisor or a multiple of 1 second.
+    Note that this option retains the configured bandwidth limits and refills 
+    token buckets only in ratio to the interval. This option will be ignored 
+    when Tor was built with Libevent's bufferevents enabled. (Default: 1 second)
+
 **TrackHostExits** __host__,__.domain__,__...__::
     For each value in the comma separated list, Tor will track recent
     connections to hosts that match this value and attempt to reuse the same
@@ -947,6 +954,13 @@ is non-zero):
     accounting period runs from the time __HH:MM__ each day to the same time on
     the next day. All times are local, and given in 24-hour time. (Defaults to
     "month 1 0:00".)
+    
+ **DisableOutgoingTokenBucket** **0**|**1**::
+    This option disables the outgoing token buckets' rate limiting and supports
+    achieving shorter cell queues and faster relaying. Note that since most 
+    data is relayed traffic and only a negligible amount is created in the relay 
+    itself the configured bandwidth limits are still retained by the token 
+    bucket on the incoming side. (Default: 0)
 
 **RefuseUnknownExits** **0**|**1**|**auto**::
     Prevent nodes that don't appear in the consensus from exiting using this

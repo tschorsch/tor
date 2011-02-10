@@ -1,0 +1,136 @@
+
+Filename: xxx-tokenbucket.txt
+Title: Token Bucket
+Author: Florian Tschorsch and Björn Scheuermann
+Created: 03-Dec-2010
+Status: Draft / Open
+
+Overview:
+
+  The following proposal targets the reduction of queuing times in onion
+  routers. In particular, we focus on the token bucket algorithm in Tor and
+  point out that current usage unnecessarily locks cells for long time spans.
+  We propose a non-intrusive change in Tor's design which overcomes the
+  deficiencies.
+
+Motivation and Background:
+
+  Cell statistics from the Tor network [1] reveal that cells reside in
+  individual onion routers' cell queues for up to several seconds. These
+  queuing times increase the end-to-end delay very significantly and are
+  apparently the largest contributor to overall cell latency in Tor.
+
+  In Tor there exist multiple token buckets on different logical levels. They
+  all work independently. They are used to limit the up- and downstream of an
+  onion router. All token buckets are refilled every second with a constant
+  amount of tokens that depends on the configured bandwidth limits. For
+  example, the so-called RelayedTokenBucket limits relay traffic only. All
+  read data of incoming connections are bound to a dedicated read token
+  bucket. An analogous mechanism exists for written data leaving the onion
+  router. We were able to identify the specific usage and implementation of
+  the token bucket algorithm as one cause for very high (and unnecessary)
+  queuing times in an onion router.
+
+  First, we observe that the token buckets in Tor are (surprisingly at a first
+  glance) allowed to take on negative fill levels. This is justified by the
+  TLS connections between onion routers where whole TLS records need to be
+  processed. The token bucket on the incoming side (i.e., the one which
+  determines at which rate it is allowed to read from incoming TCP
+  connections) in particular often runs into non-negligible negative fill
+  levels. As a consequence of this behavior, sometimes slightly more data is
+  read than it would be admissible upon strict interpretation of the token
+  bucket concept.
+
+  However, the token bucket for limiting the outgoing rate does not take on
+  negative fill levels equally often. Consequently, it regularly happens
+  that somewhat more data are read on the incoming side than the outgoing
+  token bucket allows to be written during the same cycle, even if their
+  configured data rates are the same. The respective cells will thus not be
+  allowed to leave the onion router immediately. They will thus necessarily
+  be queued for at least as long as it takes until the token bucket on the
+  outgoing side is refilled again. The refill interval currently is, as
+  mentioned before, one second -- so, these cells are delayed for a very
+  substantial time. In summary, one could say that the two buckets, on the
+  incoming and outgoing side, work like a double door system and frequently
+  lock cells for a full token bucket refill interval length.
+
+  Apart from the above described effects, it should be noted that the very
+  coarse-grained refill interval of one second also has other detrimental
+  effects. First, consider an onion router with multiple TLS connections over
+  which cells arrive. If there is high activity (i.e., many incoming cells in
+  total), then the coarse refill interval will cause unfairness. Assume (just
+  for simplicity) that C doesn't share its TLS connection with any other
+  circuit. Moreover, assume that C hasn't transmitted any data for some time
+  (e.g., due a typical bursty HTTP traffic pattern). Consequently, there are
+  no cells from this circuit in the incoming socket buffers. When the buckets
+  are refilled, the incoming token bucket will immediately spend all its
+  tokens on other incoming connections. Now assume that cells from C arrive
+  soon after. For fairness' sake, these cells should be serviced timely --
+  circuit C hasn't received any bandwidth for a significant time before.
+  However, it will take a very long time (one refill interval) before the
+  current implementation will fetch these cells from the incoming TLS
+  connection, because the token bucket will remain empty for a long time. Just
+  because the cells happened to arrive at the "wrong" point in time, they must
+  wait. Such situations may occur even though the configured admissible
+  incoming data rate is not exceeded by incoming cells: the long refill
+  intervals often lead to an operational state where all the cells that were
+  admissible during a given one-second period are queued until the end of this
+  second, before the onion router even just starts processing them. This
+  results in unnecessary, long queueing delays in the incoming socket buffers.
+  These delays are in *addition* to the above discussed queueing delays in the
+  circuit buffers. Because they occur in a different buffer, the socket buffer
+  queueing times are not visible in the Tor circuit queue delay statistics [1].
+
+  Finally, the coarse-grained refill intervals result in a very bursty outgoing
+  traffic pattern at the onion routers (one large chunk of data once per
+  second, instead of smooth transmission progress). This is undesirable, since
+  such a traffic pattern can interfere with TCP's control mechanisms and can
+  be the source of suboptimal TCP performance on the TLS links between onion
+  routers.
+
+Design:
+
+  In order to overcome the described problems, we propose two changes related
+  to the token bucket algorithm.
+
+  First, we observe that the token bucket for the relayed traffic on the
+  outgoing connections is unnecessary: since no new such traffic is generated
+  in an onion router, the rate of this traffic is already limited by the read
+  bucket on the incoming side (cp. RelayedTokenBucket). We therefore propose
+  to remove the rate limiting mechanism on the outgoing side. This will
+  eliminate the "double door effect" discussed above, since all cells are
+  allowed to flow freely out of the router once they passed the incoming rate
+  limiter.
+
+  Second, the refill interval of the buckets should be shortened. The
+  remaining token buckets should be refilled more often, with a
+  correspondingly smaller amount of tokens. For instance, the buckets might
+  be refilled every 10 milliseconds with one-hundredth of the amount of data
+  admissible per second. This will help to overcome the problem of unfairness
+  when reading from the incoming socket buffers. At the same time it smoothes
+  the traffic leaving the onion routers. We are aware that this latter change
+  has apparently been discussed before [2]; we are not sure why this change
+  has not been implemented yet.
+
+Conclusion:
+
+  The proposed measures are very simple to implement, but nevertheless a
+  significant reduction of cell queueing times can be expected. Experiments
+  which we performed with a patched onion router software revealed that
+  the CPU utilization of an onion router is not significantly
+  impacted by the reduction of the refill interval length and that cell
+  queueing times are indeed significantly shorter.
+
+  The presented design proposal is minimally intrusive and does not
+  fundamentally change the current Tor design. It is therefore highly
+  migratable into the existing architecture. Onion routers can be updated
+  independently. As more onion routers use a changed version, gradual
+  performance improvements can be expected. We believe that our contribution
+  can improve Tor's performance substantially.
+
+  Feedback is highly appreciated.
+
+References:
+
+  [1] Karsten Loesing. Analysis of Circuit Queues in Tor. August 25, 2009.
+  [2] https://trac.torproject.org/projects/tor/wiki/sponsors/SponsorD/June2011

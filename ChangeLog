@@ -1,3 +1,28 @@
+Changes in version 0.2.3.x-alpha-dev - 2011-02-09
+  With Tor 0.2.3.x-alpha-dev minor bugfixes are introduced. 
+
+  o Minor bugfixes (performance): 
+    - Now the token bucket refilling is separated from maintenance 
+      operations that get called every second. Thereby the refill 
+      interval is customizable but remains at 1 second by default. 
+      Note that this patch will be ignored when Tor was built with 
+      Libevent's bufferevents enabled.
+    - In order to achieve shorter cell queues and faster relaying, 
+      the config option DisableOutgoingTokenBucket is introduced. In 
+      summary, one could say that the buckets, on the incoming and 
+      outgoing side, work like a double door system and frequently
+      lock cells for a full token bucket refill interval length.
+      Therefore the outgoing token bucket can be disabled by setting 
+      this option. Note that since most data is relayed traffic 
+      and only a negligible amount is created in the relay itself the 
+      configured bandwidth limits are still retained by the token 
+      bucket on the incoming side. Nevertheless this option is not 
+      set by default. 
+    - We recommend to use shorter refill intervals only with 
+      DisableOutgoingTokenBucket set since this can amplify the double 
+      door effect otherwise.
+    - For further reading we refer to the proposal xxx-tokenbucket.txt
+
 Changes in version 0.2.2.21-alpha - 2011-01-15
   Tor 0.2.2.21-alpha includes all the patches from Tor 0.2.1.29, which
   continues our recent code security audit work. The main fix resolves
