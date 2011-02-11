@@ -1,0 +1,15 @@
+  o Major features (performance):
+    - Add a new config option DisableOutgoingTokenBucket that avoids the
+      "double door effect" of bytes being delayed both when entering and
+      exiting a relay. This option shouldn't affect configured bandwidth
+      limits, because most data is relayed traffic and only a negligible
+      amount is created at the relay itself. Implements part of proposal
+      XXX. Implemented by Florian Tschorsch and Björn Scheuermann.
+    - Allow configuring the token bucket refill interval to something else
+      than the default of 1 second using TokenBucketRefillInterval. Will
+      be ignored when Tor was built with Libevent's bufferevents enabled.
+      Should only be set along with DisableOutgoingTokenBucket, or we
+      might amplify the "double door effect". Implements the other part of
+      proposal XXX. Implemented by Florian Tschorsch and Björn
+      Scheuermann.
+
