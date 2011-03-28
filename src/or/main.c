@@ -1544,6 +1544,9 @@ static periodic_timer_t *refill_timer = NULL;
  * second_elapsed_callback()? What if second_elapsed_callback() takes
  * longer than one token bucket refill interval? What happens to the
  * tokens for that interval? -SH */
+/* In my opinion they can run in parallel because they both calculate
+ * the elapsed time independent from each other and relative to their
+ * last call respectively. -FT */
 static void
 refill_callback(periodic_timer_t *timer, void *arg)
 {

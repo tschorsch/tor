@@ -2251,8 +2251,8 @@ connection_consider_empty_write_buckets(connection_t *conn)
     reason = "global relayed write bucket exhausted. Pausing.";
   } else if (connection_speaks_cells(conn) &&
              conn->state == OR_CONN_STATE_OPEN &&
-             TO_OR_CONN(conn)->write_bucket <= 0) {
-    /* Why don't we consider DisableOutgoingTokenBucket here? -KL */
+             TO_OR_CONN(conn)->write_bucket <= 0 &&
+             !get_options()->DisableOutgoingTokenBucket) {
     reason = "connection write bucket exhausted. Pausing.";
   } else
     return; /* all good, no need to stop it */
@@ -2394,6 +2394,9 @@ connection_bucket_refill(int milliseconds_elapsed, time_t now)
     if (conn->write_blocked_on_bw == 1
         && global_write_bucket > 0 /* and we're allowed to write */
         /* Should we consider DisableOutgoingTokenBucket here, too? -KLSH */
+        /* Since the outgoing tokenbucket is disabled, this case cannot
+         * happen (cf. connection_consider_empty_write_buckets). Therefore
+         * considering DisableOutgoingTokenBucket is unnecessary here. -FT */
         && (!connection_counts_as_relayed_traffic(conn, now) ||
             global_relayed_write_bucket > 0) /* even if it's relayed traffic */
         && (!connection_speaks_cells(conn) ||
