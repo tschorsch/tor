@@ -1963,6 +1963,7 @@ static struct bufferevent_rate_limit_group *global_rate_limit = NULL;
 #else
 extern int global_read_bucket, global_write_bucket;
 extern int global_relayed_read_bucket, global_relayed_write_bucket;
+extern int read_balance;
 
 /** Did either global write bucket run dry last second? If so,
  * we are likely to run dry again this second, so be stingy with the
@@ -2179,8 +2180,15 @@ connection_buckets_decrement(connection_t *conn, time_t now,
   if (conn->type == CONN_TYPE_DIR && conn->purpose == DIR_PURPOSE_SERVER) {
     if (num_read > 0)
       rep_hist_note_dir_bytes_read(num_read, now);
-    if (num_written > 0)
+    if (num_written > 0){
       rep_hist_note_dir_bytes_written(num_written, now);
+      /** Strictly maintain rate limiting by counting bytes of answered
+       * diretroy requests. -FT */
+      if (get_options()->DisableOutgoingTokenBucket){
+        global_read_bucket -= (int)num_written;
+        read_balance += (int)num_written;
+      }
+    }
   }
 
   if (!connection_is_rate_limited(conn))

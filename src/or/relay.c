@@ -57,6 +57,7 @@ static int circuit_queue_streams_are_blocked(circuit_t *circ);
  * calls us. */
 
 static struct timeval cached_time_hires = {0, 0};
+extern int read_balance, global_read_bucket;
 
 /** Stop reading on edge connections when we have this many cells
  * waiting on the appropriate queue. */
@@ -1368,6 +1369,13 @@ connection_edge_package_raw_inbuf(edge_connection_t *conn, int package_partial,
   stats_n_data_cells_packaged += 1;
 
   connection_fetch_from_buf(payload, length, TO_CONN(conn));
+
+  /** Strictly maintain rate limiting by counting bytes of padded cells. -FT */
+  if (get_options()->DisableOutgoingTokenBucket && length < RELAY_PAYLOAD_SIZE){
+      int cell_padding = RELAY_PAYLOAD_SIZE - length;
+      global_read_bucket -= cell_padding;
+      read_balance += cell_padding;
+  }
 
   log_debug(domain,"(%d) Packaging %d bytes (%d waiting).", conn->_base.s,
             (int)length, (int)connection_get_inbuf_len(TO_CONN(conn)));

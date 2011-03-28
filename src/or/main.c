@@ -97,6 +97,8 @@ static uint64_t stats_prev_n_written = 0;
 #endif
 
 /* XXX we might want to keep stats about global_relayed_*_bucket too. Or not.*/
+/** Bytes we subtracted off the global_read_bucket to retain rate limiting.*/
+int read_balance = 0;
 /** How many bytes have we read since we started the process? */
 static uint64_t stats_n_bytes_read = 0;
 /** How many bytes have we written since we started the process? */
@@ -1475,7 +1477,7 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
     uint64_t cur_read,cur_written;
     connection_get_rate_limit_totals(&cur_read, &cur_written);
     bytes_written = (size_t)(cur_written - stats_prev_n_written);
-    bytes_read = (size_t)(cur_read - stats_prev_n_read);
+    bytes_read = (size_t)(cur_read - stats_prev_n_read - read_blanace);
     stats_n_bytes_read += bytes_read;
     stats_n_bytes_written += bytes_written;
     if (accounting_is_enabled(options) && seconds_elapsed >= 0)
@@ -1484,6 +1486,7 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
     control_event_stream_bandwidth_used();
     stats_prev_n_written = cur_written;
     stats_prev_n_read = cur_read;
+    read_balance = 0;
   }
   #endif
 
@@ -1576,7 +1579,10 @@ refill_callback(periodic_timer_t *timer, void *arg)
   }
 
   bytes_written = stats_prev_global_write_bucket - global_write_bucket;
-  bytes_read = stats_prev_global_read_bucket - global_read_bucket;
+  /** If outgoing tokenbucket is disabled we have to correct read bytes
+   * otherwise read_balance will be zero and thus negligible. -FT */
+  bytes_read = stats_prev_global_read_bucket - global_read_bucket - read_balance;
+
 
   stats_n_bytes_read += bytes_read;
   stats_n_bytes_written += bytes_written;
@@ -1590,6 +1596,7 @@ refill_callback(periodic_timer_t *timer, void *arg)
 
   stats_prev_global_read_bucket = global_read_bucket;
   stats_prev_global_write_bucket = global_write_bucket;
+  read_balance = 0;
 
   current_millisecond = now; /* remember what time it is, for next time */
 }
