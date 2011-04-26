@@ -316,6 +316,7 @@ static config_var_t _option_vars[] = {
   V(ORListenAddress,             LINELIST, NULL),
   V(ORPort,                      UINT,     "0"),
   V(OutboundBindAddress,         STRING,   NULL),
+  V(OutgoingBandwidthBurst,      MEMUNIT,   "10 MB"),
   OBSOLETE("PathlenCoinWeight"),
   V(PerConnBWBurst,              MEMUNIT,  "0"),
   V(PerConnBWRate,               MEMUNIT,  "0"),

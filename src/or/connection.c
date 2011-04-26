@@ -2078,9 +2078,15 @@ connection_bucket_write_limit(connection_t *conn, time_t now)
                         or_conn->write_bucket : 0;
   }
 
-  if (connection_counts_as_relayed_traffic(conn, now) &&
-      global_relayed_write_bucket <= global_write_bucket)
-    global_bucket = global_relayed_write_bucket;
+  if (get_options()->DisableOutgoingTokenBucket) {
+    global_bucket = global_read_bucket + global_write_bucket
+        + (int)get_options()->OutgoingBandwidthBurst;
+    if (global_bucket < 0) {
+      global_bucket = 0;
+    }
+  } else if (connection_counts_as_relayed_traffic(conn, now) &&
+        global_relayed_write_bucket <= global_write_bucket)
+      global_bucket = global_relayed_write_bucket;
 
   return connection_bucket_round_robin(base, priority,
                                        global_bucket, conn_bucket);
@@ -2204,7 +2210,19 @@ connection_buckets_decrement(connection_t *conn, time_t now,
     global_relayed_write_bucket -= (int)num_written;
   }
   global_read_bucket -= (int)num_read;
-  global_write_bucket -= (int)num_written;
+  if (get_options()->DisableOutgoingTokenBucket) {
+    global_write_bucket += (int)num_read;
+    if ((int)num_written <= global_write_bucket) {
+      /* If k <= y then y = y - k */
+      global_write_bucket -= (int)num_written;
+    } else {
+      /* If k > y then y = 0 and x = x - (k-y) */
+      global_read_bucket = global_read_bucket - ((int)num_written - global_write_bucket);
+      global_write_bucket = 0;
+    }
+  } else {
+    global_write_bucket -= (int)num_written;
+  }
   if (connection_speaks_cells(conn) && conn->state == OR_CONN_STATE_OPEN) {
     TO_OR_CONN(conn)->read_bucket -= (int)num_read;
     TO_OR_CONN(conn)->write_bucket -= (int)num_written;
@@ -2241,12 +2259,19 @@ static void
 connection_consider_empty_write_buckets(connection_t *conn)
 {
   const char *reason;
+  or_options_t *options = get_options();
+  int global_bucket;
 
-  if (global_write_bucket <= 0 &&
-      !get_options()->DisableOutgoingTokenBucket) {
+  if (options->DisableOutgoingTokenBucket)
+    global_bucket = global_write_bucket + global_read_bucket
+      + (int)options->OutgoingBandwidthBurst;
+  else
+    global_bucket = global_write_bucket;
+
+  if (global_bucket <= 0) {
     reason = "global write bucket exhausted. Pausing.";
   } else if (connection_counts_as_relayed_traffic(conn, approx_time()) &&
-             !get_options()->DisableOutgoingTokenBucket &&
+             !options->DisableOutgoingTokenBucket &&
              global_relayed_write_bucket <= 0) {
     reason = "global relayed write bucket exhausted. Pausing.";
   } else if (connection_speaks_cells(conn) &&
@@ -2269,7 +2294,8 @@ connection_bucket_init(void)
   or_options_t *options = get_options();
   /* start it at max traffic */
   global_read_bucket = (int)options->BandwidthBurst;
-  global_write_bucket = (int)options->BandwidthBurst;
+  global_write_bucket = options->DisableOutgoingTokenBucket ? 0
+      : (int) options->BandwidthBurst;
   if (options->RelayBandwidthRate) {
     global_relayed_read_bucket = (int)options->RelayBandwidthBurst;
     global_relayed_write_bucket = (int)options->RelayBandwidthBurst;
@@ -2332,18 +2358,27 @@ connection_bucket_refill(int milliseconds_elapsed, time_t now)
 
   tor_assert(milliseconds_elapsed >= 0);
 
-  write_buckets_empty_last_second = !options->DisableOutgoingTokenBucket &&
-      (global_relayed_write_bucket <= 0 || global_write_bucket <= 0);
+  write_buckets_empty_last_second = (!options->DisableOutgoingTokenBucket &&
+      (global_relayed_write_bucket <= 0 || global_write_bucket <= 0)) ||
+      (options->DisableOutgoingTokenBucket && global_read_bucket < 0);
 
   /* refill the global buckets */
   connection_bucket_refill_helper(&global_read_bucket,
                                   bandwidthrate, bandwidthburst,
                                   milliseconds_elapsed,
                                   "global_read_bucket");
-  connection_bucket_refill_helper(&global_write_bucket,
-                                  bandwidthrate, bandwidthburst,
-                                  milliseconds_elapsed,
-                                  "global_write_bucket");
+  if (!options->DisableOutgoingTokenBucket) {
+    connection_bucket_refill_helper(&global_write_bucket,
+                                    bandwidthrate, bandwidthburst,
+                                    milliseconds_elapsed,
+                                    "global_write_bucket");
+  } else {
+    static int last_value = 0;
+    if (last_value != global_write_bucket) {
+      log(LOG_DEBUG, LD_NET,"%s now %d.", "global_write_bucket", global_write_bucket);
+      last_value = global_write_bucket;
+    }
+  }
   connection_bucket_refill_helper(&global_relayed_read_bucket,
                                   relayrate, relayburst,
                                   milliseconds_elapsed,
@@ -3075,8 +3110,7 @@ connection_handle_write_impl(connection_t *conn, int force)
       return -1;
   }
 
-  max_to_write = force || get_options()->DisableOutgoingTokenBucket ?
-                 (ssize_t)conn->outbuf_flushlen :
+  max_to_write = force ? (ssize_t)conn->outbuf_flushlen :
                  connection_bucket_write_limit(conn, now);
 
   if (connection_speaks_cells(conn) &&

@@ -2814,6 +2814,11 @@ typedef struct {
   /** Boolean: Disable global_relayed_write_bucket (ignored when
    * bufferevents are enabled) */
   int DisableOutgoingTokenBucket;
+  /** The number of bytes that are allowed to be "stolen" from the read
+   * bucket for internally generated outbound traffic. (ignored when the
+   * outgoing token bucket is enabled)
+   */
+  uint64_t OutgoingBandwidthBurst;
   /** Token Bucket Refill resolution in milliseconds (ignored when
    * bufferevents are enabled) */
   int TokenBucketRefillInterval;
