@@ -2232,6 +2232,7 @@ typedef struct circ_buffer_stats_t {
   uint32_t processed_cells;
   double mean_num_cells_in_queue;
   double mean_time_cells_in_queue;
+  uint16_t cell_waiting_times[CIRCUIT_HISTOGRAM_SIZE];
 } circ_buffer_stats_t;
 
 /** Holds stats. */
@@ -2268,9 +2269,14 @@ rep_hist_buffer_stats_add_circ(circuit_t *circ, time_t end_of_interval)
   stat->mean_time_cells_in_queue =
       (double) orcirc->total_cell_waiting_time /
       (double) orcirc->processed_cells;
-  smartlist_add(circuits_for_buffer_stats, stat);
   orcirc->total_cell_waiting_time = 0;
   orcirc->processed_cells = 0;
+  memcpy(stat->cell_waiting_times, orcirc->cell_waiting_times, CIRCUIT_HISTOGRAM_SIZE * sizeof(uint16_t));
+  //int i;
+  //for (i = 0; i < CIRCUIT_HISTOGRAM_SIZE; i++)
+	  //stat->cell_waiting_times[i] = orcirc->cell_waiting_times[i];
+  memset(orcirc->cell_waiting_times, 0, CIRCUIT_HISTOGRAM_SIZE * sizeof(uint16_t));
+  smartlist_add(circuits_for_buffer_stats, stat);
 }
 
 /** Sorting helper: return -1, 1, or 0 based on comparison of two
@@ -2311,6 +2317,7 @@ rep_hist_buffer_stats_write(time_t now)
   FILE *out;
 #define SHARES 10
   int processed_cells[SHARES], circs_in_share[SHARES],
+      time_in_queue_histogram[SHARES][CIRCUIT_HISTOGRAM_SIZE],
       number_of_circuits, i;
   double queued_cells[SHARES], time_in_queue[SHARES];
   smartlist_t *str_build = smartlist_create();
@@ -2330,6 +2337,7 @@ rep_hist_buffer_stats_write(time_t now)
   memset(circs_in_share, 0, SHARES * sizeof(int));
   memset(queued_cells, 0, SHARES * sizeof(double));
   memset(time_in_queue, 0, SHARES * sizeof(double));
+  memset(time_in_queue_histogram, 0, SHARES * CIRCUIT_HISTOGRAM_SIZE * sizeof(int));
   if (!circuits_for_buffer_stats)
     circuits_for_buffer_stats = smartlist_create();
   smartlist_sort(circuits_for_buffer_stats,
@@ -2348,6 +2356,9 @@ rep_hist_buffer_stats_write(time_t now)
     processed_cells[share] += stat->processed_cells;
     queued_cells[share] += stat->mean_num_cells_in_queue;
     time_in_queue[share] += stat->mean_time_cells_in_queue;
+    int j;
+    for (j = 0; j < CIRCUIT_HISTOGRAM_SIZE; j++)
+      time_in_queue_histogram[share][j] += stat->cell_waiting_times[j];
     circs_in_share[share]++;
   }
   SMARTLIST_FOREACH_END(stat);
@@ -2400,11 +2411,26 @@ rep_hist_buffer_stats_write(time_t now)
     goto done;
   tor_free(str);
   SMARTLIST_FOREACH(str_build, char *, c, tor_free(c));
-  smartlist_free(str_build);
-  str_build = NULL;
+  smartlist_clear(str_build);
   if (fprintf(out, "cell-circuits-per-decile %d\n",
               (number_of_circuits + SHARES - 1) / SHARES) < 0)
     goto done;
+
+  for (i = 0; i < SHARES; i++) {
+	int j;
+	for (j = 0; j < CIRCUIT_HISTOGRAM_SIZE; j++) {
+		tor_asprintf(&buf, "%d", time_in_queue_histogram[i][j]);
+		smartlist_add(str_build, buf);
+	}
+	str = smartlist_join_strings(str_build, ",", 0, NULL);
+	if (fprintf(out, "cell-histogram-decile-%d %s\n", i, str) < 0)
+	  goto done;
+	tor_free(str);
+	SMARTLIST_FOREACH(str_build, char *, c, tor_free(c));
+	smartlist_clear(str_build);
+  }
+  smartlist_free(str_build);
+  str_build = NULL;
   finish_writing_to_file(open_file);
   open_file = NULL;
   start_of_buffer_stats_interval = now;

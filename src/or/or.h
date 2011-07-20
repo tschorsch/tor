@@ -422,6 +422,10 @@ typedef enum {
 #define CIRCUIT_STATE_OR_WAIT 2
 /** Circuit state: onionskin(s) processed, ready to send/receive cells. */
 #define CIRCUIT_STATE_OPEN 3
+/** Number of buckets that the histogram for cell waiting time has */
+#define CIRCUIT_HISTOGRAM_SIZE 1000
+/** Bucket length of the histogram in ms */
+#define CIRCUIT_HISTOGRAM_BUCKET_SIZE 10
 
 #define _CIRCUIT_PURPOSE_MIN 1
 
@@ -2434,6 +2438,8 @@ typedef struct or_circuit_t {
   /** The EWMA count for the number of cells flushed from the
    * p_conn_cells queue. */
   cell_ewma_t p_cell_ewma;
+
+  uint16_t cell_waiting_times[CIRCUIT_HISTOGRAM_SIZE];
 } or_circuit_t;
 
 /** Convert a circuit subtype to a circuit_t.*/

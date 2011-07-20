@@ -2339,6 +2339,10 @@ connection_or_flush_from_first_active_circuit(or_connection_t *conn, int max,
         }
         orcirc->total_cell_waiting_time += cell_waiting_time;
         orcirc->processed_cells++;
+        int bucket = cell_waiting_time / CIRCUIT_HISTOGRAM_BUCKET_SIZE;
+        if (bucket >= CIRCUIT_HISTOGRAM_SIZE)
+          bucket = CIRCUIT_HISTOGRAM_SIZE - 1;
+        orcirc->cell_waiting_times[bucket]++;
       }
     }
 
