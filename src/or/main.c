@@ -91,10 +91,9 @@ static int stats_prev_global_read_bucket;
 /** What was the write bucket before the last second_elapsed_callback() call?
  * (used to determine how many bytes we've written). */
 static int stats_prev_global_write_bucket;
-#else
+#endif
 static uint64_t stats_prev_n_read = 0;
 static uint64_t stats_prev_n_written = 0;
-#endif
 
 /* XXX we might want to keep stats about global_relayed_*_bucket too. Or not.*/
 /** How many bytes have we read since we started the process? */
@@ -1471,7 +1470,6 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
   seconds_elapsed = current_second ? (int)(now - current_second) : 0;
 #ifdef USE_BUFFEREVENTS
   {
-    size_t bytes_written, bytes_read;
     uint64_t cur_read,cur_written;
     connection_get_rate_limit_totals(&cur_read, &cur_written);
     bytes_written = (size_t)(cur_written - stats_prev_n_written);
@@ -1480,12 +1478,18 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
     stats_n_bytes_written += bytes_written;
     if (accounting_is_enabled(options) && seconds_elapsed >= 0)
       accounting_add_bytes(bytes_read, bytes_written, seconds_elapsed);
-    control_event_bandwidth_used((uint32_t)bytes_read,(uint32_t)bytes_written);
-    control_event_stream_bandwidth_used();
     stats_prev_n_written = cur_written;
     stats_prev_n_read = cur_read;
   }
-  #endif
+#else
+  bytes_read = (size_t)(stats_n_bytes_read - stats_prev_n_read);
+  bytes_written = (size_t)(stats_n_bytes_written - stats_prev_n_written);
+  stats_prev_n_read = stats_n_bytes_read;
+  stats_prev_n_written = stats_n_bytes_written;
+#endif
+
+  control_event_bandwidth_used((uint32_t)bytes_read,(uint32_t)bytes_written);
+  control_event_stream_bandwidth_used();
 
   if (server_mode(options) &&
       !we_are_hibernating() &&
@@ -1555,13 +1559,12 @@ refill_callback(periodic_timer_t *timer, void *arg)
   int milliseconds_elapsed = 0;
   int seconds_rolled_over = 0;
 
-  or_options_t *options = get_options();
+  const or_options_t *options = get_options();
 
   (void)timer;
   (void)arg;
 
-  /* Libevent question: Can we use timer.tv for now? -KLSH */
-  gettimeofday(&now, 0);
+  tor_gettimeofday(&now);
 
   /* If this is our first time, no time has passed. */
   if (current_millisecond.tv_sec) {
@@ -1579,8 +1582,6 @@ refill_callback(periodic_timer_t *timer, void *arg)
   stats_n_bytes_written += bytes_written;
   if (accounting_is_enabled(options) && milliseconds_elapsed >= 0)
     accounting_add_bytes(bytes_read, bytes_written, seconds_rolled_over);
-  control_event_bandwidth_used((uint32_t)bytes_read,(uint32_t)bytes_written);
-  control_event_stream_bandwidth_used();
 
   if (milliseconds_elapsed > 0)
     connection_bucket_refill(milliseconds_elapsed, now.tv_sec);
