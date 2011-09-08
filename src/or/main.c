@@ -1455,10 +1455,13 @@ second_elapsed_callback(periodic_timer_t *timer, void *arg)
    * time against a bunch of timeouts every second. */
   static time_t current_second = 0;
   time_t now;
+  size_t bytes_written;
+  size_t bytes_read;
   int seconds_elapsed;
-  or_options_t *options = get_options();
+  const or_options_t *options = get_options();
   (void)timer;
   (void)arg;
+
 
   n_libevent_errors = 0;
 
