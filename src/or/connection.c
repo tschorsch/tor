@@ -2217,7 +2217,8 @@ connection_buckets_decrement(connection_t *conn, time_t now,
       global_write_bucket -= (int)num_written;
     } else {
       /* If k > y then y = 0 and x = x - (k-y) */
-      global_read_bucket = global_read_bucket - ((int)num_written - global_write_bucket);
+      global_read_bucket = global_read_bucket - 
+              ((int)num_written - global_write_bucket);
       global_write_bucket = 0;
     }
   } else {
@@ -2227,6 +2228,11 @@ connection_buckets_decrement(connection_t *conn, time_t now,
     TO_OR_CONN(conn)->read_bucket -= (int)num_read;
     TO_OR_CONN(conn)->write_bucket -= (int)num_written;
   }
+  
+  //FT: Just for testing
+  log_notice(LD_GENERAL, "Buckets (r/w global,r/w relay) %d %d %d %d",
+          global_read_bucket,global_write_bucket,
+          global_relayed_read_bucket,global_relayed_write_bucket);
 }
 
 /** If we have exhausted our global buckets, or the buckets for conn,
@@ -2384,6 +2390,13 @@ connection_bucket_refill(int milliseconds_elapsed, time_t now)
                                   relayrate, relayburst,
                                   milliseconds_elapsed,
                                   "global_relayed_write_bucket");
+  
+  
+  //FT: Just for testing
+  log_notice(LD_GENERAL, "Buckets (r/w global,r/w relay) %d %d %d %d",
+          global_read_bucket,global_write_bucket,
+          global_relayed_read_bucket,global_relayed_write_bucket);
+  
 
   /* refill the per-connection buckets */
   SMARTLIST_FOREACH(conns, connection_t *, conn,

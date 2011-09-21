@@ -294,7 +294,7 @@ static config_var_t _option_vars[] = {
   OBSOLETE("LinkPadding"),
   OBSOLETE("LogLevel"),
   OBSOLETE("LogFile"),
-  V(LogTimeGranularity,          MSEC_INTERVAL, "1 second"),
+  V(LogTimeGranularity,          MSEC_INTERVAL, "250 msec"),
   V(LongLivedPorts,              CSV,
                          "21,22,706,1863,5050,5190,5222,5223,6667,6697,8300"),
   VAR("MapAddress",              LINELIST, AddressMap,           NULL),
