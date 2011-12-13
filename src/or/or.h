@@ -3259,6 +3259,13 @@ typedef struct {
                       * acceleration where available? */
   /** Token Bucket Refill resolution in milliseconds. */
   int TokenBucketRefillInterval;
+  /** Boolean: Use credit bucket (ignored when bufferevents are enabled) */
+  int CreditBucket;
+  /** The number of bytes that are allowed to be "stolen" from the read
+   * bucket for internally generated outbound traffic. (ignored when 
+   * CreditBucket is disabled)
+   */
+  uint64_t OutgoingBandwidthBurst;
   char *AccelName; /**< Optional hardware acceleration engine name. */
   char *AccelDir; /**< Optional hardware acceleration engine search dir. */
   int UseEntryGuards; /**< Boolean: Do we try to enter from a smallish number
